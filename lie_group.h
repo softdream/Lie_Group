@@ -136,7 +136,10 @@ public:
 		return rotaion_matrix_;
 	}
 
-	
+	const Matrix3x3 operator * ( const Matrix3x3& other )
+	{
+		return this->rotaion_matrix_ * other;
+	}
 
 private:
 	// SO3 Group Element
@@ -154,7 +157,10 @@ class SE3
 public:
 	using Vector3 = typename Eigen::Matrix<DataType, 3, 1>;
 	using Vector6 = typename Eigen::Matrix<DataType, 6, 1>;
-        using Matrix4x4 = typename Eigen::Matrix<DataType, 4, 4>;
+       	using Matrix3x3 = typename Eigen::Matrix<DataType, 3, 3>;
+	using Matrix4x4 = typename Eigen::Matrix<DataType, 4, 4>;
+	using Matrix6x6 = typename Eigen::Matrix<DataType, 6, 6>;
+
 
 	template<typename T>
         using Vector3_T = typename Eigen::Matrix<T, 3, 1>;
@@ -230,6 +236,18 @@ public:
 	} 
 
 	template<typename T>
+        static
+        const typename std::enable_if_t<is_numerical_type<T>::value, Matrix3x3_T<T>>
+        caculateJInverse( const T& theta, const Vector3_T<T>& a )
+        {
+		auto half_theta = 0.5 * theta;
+		auto theta_cot = ::cos( half_theta ) / ::sin( half_theta );
+
+		return half_theta * theta_cot * Matrix3x3_T<T>::Identity() + ( 1 - half_theta * theta_cot ) * a * a.transpose() - half_theta * SO3<T>::hat( a );
+        }
+
+
+	template<typename T>
 	static 
 	const typename std::enable_if_t<is_numerical_type<T>::value, Vector6_T<T>> 
 	log( const SE3<T>& pose_SE3 ) 
@@ -242,11 +260,9 @@ public:
 		auto phi = SO3<T>::rotationMatrix2Vector( rotation );
 		auto a = phi.normalized();
 
-		auto J = caculateJ( theta, a );
-
 		Vector6_T<T> cauthy = Vector6_T<T>::Zero();
-		cauthy.template head<3>() = J.inverse() * translation;
-	
+		cauthy.template head<3>() = caculateJInverse( theta, a ) * translation;	
+
 		cauthy.template tail<3>() = phi;
 
 		return cauthy;
@@ -257,7 +273,7 @@ public:
 	const typename std::enable_if_t<is_numerical_type<T>::value, SE3<T>> 
 	exp( const Vector6_T<T>& cauthy )
 	{
-		Vector3_T<T> pho = cauthy.template head<3>(); // translation
+		Vector3_T<T> pho = cauthy.template head<3>(); // J^(-1) * translation
 	
 		Vector3_T<T> phi = cauthy.template tail<3>(); // rotation
 	
@@ -270,21 +286,64 @@ public:
 		transform.template block<3, 3>( 0, 0 ) = SO3<T>::rotationVector2Matrix( phi );
 
 		transform.template block<3, 1>( 0, 3 ) = J * pho;
+		
 		transform(3, 3) = 1;		
 
 		return transform;
 	}
+
 
 	const Matrix4x4& getTransformMatrix() const
         {
                 return transform_;
         }
 
+	const Matrix4x4 operator* ( const Matrix4x4& other )
+	{
+		return this->transform_ * other;
+	}
+	
+	const SE3<DataType> inverse() const
+	{
+		return SE3<DataType>( this->transform_.inverse() );
+	} 
+
+	const Matrix3x3 getRotation() const
+	{
+		return transform_.template block<3, 3>( 0, 0 );
+	}
+
+	const Vector3 getTranslation() const
+	{
+		return transform_.template block<3, 1>( 0, 3 );
+	}
+
+	const Matrix6x6 Adj()
+	{
+		auto rotation = transform_.template block<3, 3>( 0, 0 );
+		auto translation = transform_.template block<3, 1>( 0, 3 );		
+
+		Matrix6x6 ret = Matrix6x6::Zero();
+		ret.template block<3, 3>( 0, 0 ) = rotation;
+		ret.template block<3, 3>( 3, 3 ) = rotation;
+		ret.template block<3, 3>( 0, 3 ) = SO3<DataType>::hat( translation ) * rotation;
+		
+		return ret;
+	}
+
+	const SO3<DataType> getSO3() const
+	{
+		return SO3<DataType>( transform_.template block<3, 3>( 0, 0 ) );
+	}
 
 private:
 	// SE3 Group Element
 	Matrix4x4 transform_ = Matrix4x4::Zero();
 };
+
+using SE3D = SE3<double>;
+using SE3F = SE3<float>;
+using SE3I = SE3<int>;
 
 }
 
